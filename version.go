@@ -12,7 +12,7 @@ import (
 
 // version is set at build time:
 //
-//	go build -ldflags "-H=windowsgui -s -w -X main.version=v1.1.0" -o bin/ath.exe
+//	go build -ldflags "-H=windowsgui -s -w -X main.version=v1.1.0" -o bin/duck.exe
 //
 // A build without -X reports "dev" plus the git commit it was built from.
 var version = "dev"
@@ -63,7 +63,7 @@ func versionString() string {
 // its own, so it borrows the console it was started from (cmd, PowerShell).
 // Started from Explorer or a shortcut there is none, so it shows a message box.
 func showVersion() {
-	text := "ATH " + versionString()
+	text := "Duck " + versionString()
 	log.Printf("--version: %s", text)
 	if r, _, _ := pAttachConsole.Call(attachParentProcess); r != 0 {
 		if f, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
@@ -72,5 +72,5 @@ func showVersion() {
 			return
 		}
 	}
-	pMessageBoxW.Call(0, uintptr(unsafe.Pointer(utf16(text))), uintptr(unsafe.Pointer(utf16("ATH"))), mbIconInformation)
+	pMessageBoxW.Call(0, uintptr(unsafe.Pointer(utf16(text))), uintptr(unsafe.Pointer(utf16("Duck"))), mbIconInformation)
 }

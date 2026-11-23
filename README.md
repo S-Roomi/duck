@@ -1,4 +1,4 @@
-# ATH
+# Duck
 
 A small background process for Windows 10/11 that automatically hides the taskbar when a fullscreen or borderless app is in front.
 
@@ -14,7 +14,7 @@ A small background process for Windows 10/11 that automatically hides the taskba
 
 ## Download
 
-Download `ath.exe` from the [latest release](https://github.com/S-Roomi/ath/releases/latest) and put it in a folder of its own.
+Download `duck.exe` from the [latest release](https://github.com/S-Roomi/duck/releases/latest) and put it in a folder of its own.
 
 Windows SmartScreen may warn about an unknown publisher the first time, because the exe isn't signed. Feel free to look over the source code. 
 
@@ -25,25 +25,25 @@ Windows SmartScreen may warn about an unknown publisher the first time, because 
 On Windows:
 
 ```
-go build -ldflags "-H=windowsgui -s -w" -o bin/ath.exe
+go build -ldflags "-H=windowsgui -s -w" -o bin/duck.exe
 ```
 
-This puts the exe in `bin/`. `config.json`, `ath.log` and `hidden.marker` are created next to the exe, so they end up in `bin/` too. You can copy `ath.exe` anywhere else; its files follow it.
+This puts the exe in `bin/`. `config.json`, `duck.log` and `hidden.marker` are created next to the exe, so they end up in `bin/` too. You can copy `duck.exe` anywhere else; its files follow it.
 
 ## Usage
 
 | Command | What it does |
 | --- | --- |
-| `ath.exe` | Start the background watcher |
-| `ath.exe --quit` | Quit the running instance |
-| `ath.exe --restore` | Quit the running instance and force the taskbar to show |
-| `ath.exe --install-autostart` | Start automatically at login |
-| `ath.exe --remove-autostart` | Remove autostart |
-| `ath.exe --version` | Show the version |
+| `duck.exe` | Start the background watcher |
+| `duck.exe --quit` | Quit the running instance |
+| `duck.exe --restore` | Quit the running instance and force the taskbar to show |
+| `duck.exe --install-autostart` | Start automatically at login |
+| `duck.exe --remove-autostart` | Remove autostart |
+| `duck.exe --version` | Show the version |
 
 ### Tray icon
 
-While it runs, ATH shows an icon in the notification area. Hover over it to see what ATH is doing: `idle` (running, taskbar visible), `taskbar hidden for <app>`, `keeping taskbar hidden` or `paused`. Right-click or left-click it for:
+While it runs, Duck shows an icon in the notification area. Hover over it to see what Duck is doing: `idle` (running, taskbar visible), `taskbar hidden for <app>`, `keeping taskbar hidden` or `paused`. Right-click or left-click it for:
 
 | Item | What it does |
 | --- | --- |
@@ -52,7 +52,7 @@ While it runs, ATH shows an icon in the notification area. Hover over it to see 
 | Never hide for *app* | Adds the last fullscreen app to `ignore` in `config.json` |
 | Start with Windows | Turns autostart on or off, like `--install-autostart` / `--remove-autostart` |
 | Open config | Opens `config.json` |
-| Open log | Opens `ath.log` |
+| Open log | Opens `duck.log` |
 | Quit and Restore taskbar | Same as `--restore` |
 | Quit | Same as `--quit` |
 

@@ -45,7 +45,7 @@ var (
 	activeHideHotkey  atomic.Pointer[string]  // same for Keep taskbar hidden
 )
 
-// hotkeySlot is one shortcut ATH can register.
+// hotkeySlot is one shortcut Duck can register.
 type hotkeySlot struct {
 	id     uintptr
 	key    string // config key, for the log

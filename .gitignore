@@ -8,7 +8,7 @@
 /dist/
 
 # Runtime files written next to the exe
-ath.log
+duck.log
 config.json
 hidden.marker
 

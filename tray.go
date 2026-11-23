@@ -50,7 +50,7 @@ const (
 	wmRButtonUp  = 0x0205
 	wmApp        = 0x8000
 	wmTrayNotify = wmApp + 1
-	// Posted to the tray window by a second ATH launch (another process), so
+	// Posted to the tray window by a second Duck launch (another process), so
 	// it must not carry pointers.
 	wmShowRunning = wmApp + 3
 	// Posted to the tray window by the main loop when the tooltip text changes.
@@ -162,7 +162,7 @@ var (
 	reloadConfig      atomic.Bool            // set after the tray edits config.json; the main loop reloads at once
 	lastFullscreen    atomic.Pointer[string] // process name of the last fullscreen app; written by the main loop
 	trayTip           atomic.Pointer[string] // tooltip text showing the current state; written by the main loop
-	trayClassName     = "ATH.TrayWindow"
+	trayClassName     = "Duck.TrayWindow"
 )
 
 // trayWndProc must be created exactly once (syscall.NewCallback slots are never freed).
@@ -225,7 +225,7 @@ func startTray(stopEv uintptr) (stop func(), ok bool) {
 		// menu needs a window that can become the foreground window.
 		hwnd, _, _ := pCreateWindowExW.Call(0,
 			uintptr(unsafe.Pointer(utf16(trayClassName))),
-			uintptr(unsafe.Pointer(utf16("ATH"))),
+			uintptr(unsafe.Pointer(utf16("Duck"))),
 			0, 0, 0, 0, 0, 0, 0, hInst, 0)
 		if hwnd == 0 {
 			ready <- false
@@ -288,7 +288,7 @@ func addTrayIcon() bool {
 
 // setTipText copies the current tooltip into nid and sets nifTip.
 func setTipText(nid *notifyIconData) {
-	text := "ATH"
+	text := "Duck"
 	if p := trayTip.Load(); p != nil {
 		text = *p
 	}
@@ -317,34 +317,34 @@ func setTrayTip(text string) {
 	}
 }
 
-// tipText describes what ATH is doing, for the tray tooltip. "idle" means
+// tipText describes what Duck is doing, for the tray tooltip. "idle" means
 // running with the taskbar visible.
 func tipText(isPaused, isForced, hidden bool, hiddenFor string) string {
 	switch {
 	case isPaused:
-		return "ATH - paused"
+		return "Duck - paused"
 	case isForced:
-		return "ATH - keeping taskbar hidden"
+		return "Duck - keeping taskbar hidden"
 	case hidden && hiddenFor != "":
-		return "ATH - taskbar hidden for " + hiddenFor
+		return "Duck - taskbar hidden for " + hiddenFor
 	case hidden:
-		return "ATH - taskbar hidden"
+		return "Duck - taskbar hidden"
 	default:
-		return "ATH - idle"
+		return "Duck - idle"
 	}
 }
 
-// showRunningBalloon shows an "ATH is already running" notification from the
-// tray icon. It runs when ATH is launched a second time.
+// showRunningBalloon shows a "Duck is already running" notification from the
+// tray icon. It runs when Duck is launched a second time.
 func showRunningBalloon() {
 	nid := trayData()
 	nid.UFlags = nifInfo
 	nid.DwInfoFlags = niifInfo
-	text := "Right-click the ATH icon in the notification area for options."
+	text := "Right-click the Duck icon in the notification area for options."
 	if paused.Load() {
 		text = "Hiding is paused. " + text
 	}
-	title, _ := syscall.UTF16FromString("ATH is already running")
+	title, _ := syscall.UTF16FromString("Duck is already running")
 	info, _ := syscall.UTF16FromString(text)
 	copy(nid.SzInfoTitle[:len(nid.SzInfoTitle)-1], title)
 	copy(nid.SzInfo[:len(nid.SzInfo)-1], info)
@@ -382,7 +382,7 @@ func showTrayMenu(hwnd uintptr) {
 	appendItem := func(flags, id uintptr, text string) {
 		pAppendMenuW.Call(menu, flags, id, uintptr(unsafe.Pointer(utf16(text))))
 	}
-	appendItem(mfString|mfGrayed, 0, "ATH "+versionString())
+	appendItem(mfString|mfGrayed, 0, "Duck "+versionString())
 	pAppendMenuW.Call(menu, mfSeparator, 0, 0)
 	pauseText := "Pause"
 	if paused.Load() {
@@ -401,7 +401,7 @@ func showTrayMenu(hwnd uintptr) {
 	}
 	appendItem(forceFlags, cmdForceHide, forceText)
 	// Read the last fullscreen app now: the main loop recorded it before the
-	// menu made ATH the foreground window.
+	// menu made Duck the foreground window.
 	var lastProc string
 	if p := lastFullscreen.Load(); p != nil {
 		lastProc = *p

@@ -16,13 +16,13 @@ import (
 )
 
 const (
-	mutexName      = `Local\ATH.Mutex`
-	stopEventName  = `Local\ATH.Stop`
+	mutexName      = `Local\Duck.Mutex`
+	stopEventName  = `Local\Duck.Stop`
 	markerFileName = "hidden.marker"
-	logFileName    = "ath.log"
+	logFileName    = "duck.log"
 	runSubKey      = `Software\Microsoft\Windows\CurrentVersion\Run`
 	runKeyPath     = `HKCU\` + runSubKey
-	runValueName   = "ATH"
+	runValueName   = "Duck"
 	reassertLogGap = 10 * time.Second // at most one "came back" log line per gap
 )
 
@@ -113,7 +113,7 @@ func run(cfgPath string) {
 	setTray(cfg.TrayIcon)
 	defer func() { setTray(false) }()
 
-	log.Printf("ATH %s watching (poll %dms, enter %dms, leave %dms, per_monitor %v, reassert %v)",
+	log.Printf("Duck %s watching (poll %dms, enter %dms, leave %dms, per_monitor %v, reassert %v)",
 		versionString(), cfg.PollMs, cfg.EnterDelayMs, cfg.LeaveDelayMs, cfg.PerMonitor, cfg.Reassert)
 
 	for {
@@ -165,7 +165,7 @@ func run(cfgPath string) {
 			log.Printf("foreground: %s", fg)
 		}
 		// Remember the last fullscreen app for "Never hide for ..." in the tray
-		// menu. Opening the menu makes ATH the foreground window, so the tray
+		// menu. Opening the menu makes Duck the foreground window, so the tray
 		// cannot look this up itself at that point.
 		if fg.on {
 			if last := lastFullscreen.Load(); last == nil || *last != fg.proc {
