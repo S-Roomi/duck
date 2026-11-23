@@ -4,7 +4,7 @@ Notes for Claude Code (and other AI coding agents) working on this repo. User-fa
 
 ## What this is
 
-ATH is a Windows-only Go background process (no visible window, no console; just a notification-area icon). It hides the taskbar while a fullscreen or borderless app is in front and shows it again when the user leaves. It has no dependencies outside the standard library and talks to Win32 directly through `syscall.NewLazyDLL`.
+Duck is a Windows-only Go background process (no visible window, no console; just a notification-area icon). It hides the taskbar while a fullscreen or borderless app is in front and shows it again when the user leaves. It has no dependencies outside the standard library and talks to Win32 directly through `syscall.NewLazyDLL`.
 
 ## Layout
 
@@ -29,10 +29,10 @@ You cannot run the exe from WSL or Linux. Cross-compile and vet:
 ```sh
 gofmt -l .                                    # must print nothing
 GOOS=windows GOARCH=amd64 go vet ./...
-GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o bin/ath.exe
+GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o bin/duck.exe
 ```
 
-Build into `bin/` (gitignored), never the repo root: the exe writes `config.json`, `ath.log` and `hidden.marker` next to itself, so a root build litters the source folder. Release builds add `-X main.version=vX.Y.Z` to `-ldflags`. The code stays a flat `package main` at the root on purpose; split into packages only for a real reason (e.g. testable detection logic).
+Build into `bin/` (gitignored), never the repo root: the exe writes `config.json`, `duck.log` and `hidden.marker` next to itself, so a root build litters the source folder. Release builds add `-X main.version=vX.Y.Z` to `-ldflags`. The code stays a flat `package main` at the root on purpose; split into packages only for a real reason (e.g. testable detection logic).
 
 Go 1.22 (`go.mod`). The user compiles and tests on Windows themselves, so hand changes back with a clear manual test list.
 
@@ -44,13 +44,13 @@ Go 1.22 (`go.mod`). The user compiles and tests on Windows themselves, so hand c
 - `reassert` re-hides the taskbar while the applied state is unchanged and Explorer has shown it again (e.g. after Explorer restarts).
 - `hidden.marker` next to the exe records "taskbar hidden". On startup, a leftover marker means a previous run died while hidden, so all taskbars are shown.
 - `--quit` (old name `--stop`, still accepted) sets a named event. `--restore` stops the running instance, then shows all taskbars.
-- A second launch (mutex already taken) finds the running tray window by class (`ATH.TrayWindow`) and posts it `wmShowRunning`; the tray thread shows a balloon (`NIF_INFO`). The message crosses processes, so it carries no pointers. Without a tray window it only logs and exits.
+- A second launch (mutex already taken) finds the running tray window by class (`Duck.TrayWindow`) and posts it `wmShowRunning`; the tray thread shows a balloon (`NIF_INFO`). The message crosses processes, so it carries no pointers. Without a tray window it only logs and exits.
 - The tray menu's Quit sets the same stop event. "Quit and Restore taskbar" also sets `restoreOnExit`, so `run()` shows every taskbar on the way out.
-- The tray menu's Pause/Resume and the `hotkey` shortcut both call `togglePause()`, which flips the `paused` atomic and sets the wake event. The hotkey uses `RegisterHotKey` (allowed with anti-cheat; it is not a keyboard hook). While paused, the loop's target is "off" with a delay of 0, so a taskbar ATH hid comes back at once and nothing new is hidden.
+- The tray menu's Pause/Resume and the `hotkey` shortcut both call `togglePause()`, which flips the `paused` atomic and sets the wake event. The hotkey uses `RegisterHotKey` (allowed with anti-cheat; it is not a keyboard hook). While paused, the loop's target is "off" with a delay of 0, so a taskbar Duck hid comes back at once and nothing new is hidden.
 - "Keep taskbar hidden" (tray item and `hide_hotkey`) calls `toggleForceHide()`, which flips the `forceHide` atomic. While it is on, the target is "on" for every taskbar (`mon` 0) whatever is in front, with a delay of 0, except while shell UI is in front. Pause wins over it. `forcedHid` remembers that the applied hide came from it, so turning it off shows the taskbar without the leave delay. Like Pause, it is not saved.
 - `tray_icon` is applied on config reload too: `setTray()` in `run()` calls `startTray()` or the stop func it returned. The tray thread resets `trayHwnd` and `trayIcon` when it ends, and `RegisterClassExW` failing on a restart is expected (the class is still registered).
 - The tray tooltip shows the state (`tipText()`: idle, taskbar hidden for <app>, keeping taskbar hidden, paused). The loop calls `setTrayTip()` at the top of every tick; it stores the text and posts `wmTrayUpdate` to the tray window only when the text changed, and the tray thread does the `NIM_MODIFY`. `addTrayIcon` uses the stored text, so the state survives an Explorer restart.
-- "Never hide for <app>": the main loop stores the last fullscreen process in `lastFullscreen`, because opening the menu makes ATH the foreground window. `addToIgnore` edits only the `ignore` key (unknown keys kept, unparseable file left alone) via temp file + rename, then the tray sets `reloadConfig` and the wake event so the loop reloads at once.
+- "Never hide for <app>": the main loop stores the last fullscreen process in `lastFullscreen`, because opening the menu makes Duck the foreground window. `addToIgnore` edits only the `ignore` key (unknown keys kept, unparseable file left alone) via temp file + rename, then the tray sets `reloadConfig` and the wake event so the loop reloads at once.
 
 ## Rules
 
@@ -60,10 +60,10 @@ Go 1.22 (`go.mod`). The user compiles and tests on Windows themselves, so hand c
 - **Detection:** match windows by process name or class, never by title (titles are localized). A maximized window whose frame hangs past the monitor edges is not fullscreen (with taskbar auto-hide on, maximized windows cover the monitor); real fullscreen windows fit the monitor exactly.
 - **Expensive events:** don't hook `EVENT_OBJECT_LOCATIONCHANGE` or other high-volume events system-wide. They fire on every mouse move.
 - **No thide:** the tool used to call thide. It no longer does; don't reintroduce it or any other external tool.
-- **Data files:** `config.json`, `ath.log` and `hidden.marker` always live next to the exe. Don't add a fallback directory such as `%LOCALAPPDATA%`; the user removed one on purpose.
+- **Data files:** `config.json`, `duck.log` and `hidden.marker` always live next to the exe. Don't add a fallback directory such as `%LOCALAPPDATA%`; the user removed one on purpose.
 - **Config:** new settings go in `Config` and `defaultConfig()`, with a JSON tag and a row in the README config table. Missing keys keep their defaults and unknown keys are ignored, so old config files must keep working.
 - **Tray:** the icon must be re-added on the `TaskbarCreated` message (Explorer restarts are common here) and removed with `NIM_DELETE` on exit, or a dead icon is left behind. There is no `.ico` resource (stdlib-only build), so the icon is drawn in code.
-- **Logging:** the tray menu is the only UI, so `ath.log` is the main way to see what it did. Log state changes, not every tick.
+- **Logging:** the tray menu is the only UI, so `duck.log` is the main way to see what it did. Log state changes, not every tick.
 
 ## Git
 
