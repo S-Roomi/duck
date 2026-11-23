@@ -544,8 +544,7 @@ func autostartEnabled() bool {
 	return strings.EqualFold(val, exe)
 }
 
-// makeTrayIcon draws a small monitor with a taskbar strip, since the exe has
-// no icon resource. Returns 0 on failure (Windows then shows a blank icon).
+// makeTrayIcon draws a small grey duck, since the exe has no icon resource. Returns 0 on failure (Windows then shows a blank icon).
 func makeTrayIcon() uintptr {
 	w, _, _ := pGetSystemMetrics.Call(smCxSmIcon)
 	h, _, _ := pGetSystemMetrics.Call(smCySmIcon)
@@ -579,17 +578,36 @@ func makeTrayIcon() uintptr {
 func drawIcon(px []uint32, w, h int) {
 	type shape struct {
 		x0, y0, x1, y1, r float64
-		c                 [3]float64 // RGB 0..255
+		ellipse           bool         // r is ignored for ellipses
+		poly              [][2]float64 // when set, the other fields are ignored
 	}
-	shapes := []shape{ // later shapes draw on top; coordinates are 0..1
-		{0.40, 0.76, 0.60, 0.90, 0, [3]float64{96, 110, 135}},     // stand
-		{0.24, 0.86, 0.76, 0.95, 0.04, [3]float64{96, 110, 135}},  // base
-		{0.04, 0.08, 0.96, 0.80, 0.12, [3]float64{37, 99, 235}},   // screen
-		{0.14, 0.62, 0.86, 0.71, 0.03, [3]float64{219, 234, 254}}, // taskbar strip
+	// One flat colour, like a rubber-duck silhouette facing right.
+	grey := [3]float64{135, 135, 142}
+	shapes := []shape{ // coordinates are 0..1
+		{poly: [][2]float64{{0.02, 0.30}, {0.38, 0.46}, {0.34, 0.72}, {0.10, 0.66}}}, // tail
+		{x0: 0.08, y0: 0.42, x1: 0.97, y1: 0.97, r: 0.275},                           // body
+		{x0: 0.50, y0: 0.22, x1: 0.88, y1: 0.66, ellipse: true},                      // neck
+		{x0: 0.44, y0: 0.02, x1: 0.88, y1: 0.52, ellipse: true},                      // head
+		{x0: 0.76, y0: 0.25, x1: 1.00, y1: 0.40, ellipse: true},                      // beak
 	}
 	inside := func(s shape, x, y float64) bool {
+		if s.poly != nil {
+			in := false
+			for i, j := 0, len(s.poly)-1; i < len(s.poly); j, i = i, i+1 {
+				a, b := s.poly[i], s.poly[j]
+				if (a[1] > y) != (b[1] > y) && x < (b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0] {
+					in = !in
+				}
+			}
+			return in
+		}
 		if x < s.x0 || x > s.x1 || y < s.y0 || y > s.y1 {
 			return false
+		}
+		if s.ellipse {
+			rx, ry := (s.x1-s.x0)/2, (s.y1-s.y0)/2
+			dx, dy := (x-s.x0-rx)/rx, (y-s.y0-ry)/ry
+			return dx*dx+dy*dy <= 1
 		}
 		cx := min(max(x, s.x0+s.r), s.x1-s.r)
 		cy := min(max(y, s.y0+s.r), s.y1-s.r)
@@ -606,7 +624,7 @@ func drawIcon(px []uint32, w, h int) {
 					y := (float64(py) + (float64(sy)+0.5)/ss) / float64(h)
 					for i := len(shapes) - 1; i >= 0; i-- {
 						if inside(shapes[i], x, y) {
-							c := shapes[i].c
+							c := grey
 							r, g, b, a = r+c[0], g+c[1], b+c[2], a+1
 							break
 						}
