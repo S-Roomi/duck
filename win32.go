@@ -14,6 +14,8 @@ var (
 	pGetWindowRect              = user32.NewProc("GetWindowRect")
 	pMonitorFromWindow          = user32.NewProc("MonitorFromWindow")
 	pGetMonitorInfoW            = user32.NewProc("GetMonitorInfoW")
+	pEnumDisplayMonitors        = user32.NewProc("EnumDisplayMonitors")
+	pEnumDisplayDevicesW        = user32.NewProc("EnumDisplayDevicesW")
 	pGetClassNameW              = user32.NewProc("GetClassNameW")
 	pGetWindowThreadProcessID   = user32.NewProc("GetWindowThreadProcessId")
 	pIsWindowVisible            = user32.NewProc("IsWindowVisible")
@@ -42,7 +44,24 @@ type monitorInfo struct {
 	DwFlags   uint32
 }
 
+// monitorInfoEx is MONITORINFOEXW: monitorInfo plus the device name (\\.\DISPLAY1).
+type monitorInfoEx struct {
+	monitorInfo
+	SzDevice [32]uint16
+}
+
+// displayDevice is DISPLAY_DEVICEW.
+type displayDevice struct {
+	Cb           uint32
+	DeviceName   [32]uint16
+	DeviceString [128]uint16
+	StateFlags   uint32
+	DeviceID     [128]uint16
+	DeviceKey    [128]uint16
+}
+
 const (
+	monitorInfoPrimary      = 1 // MONITORINFOF_PRIMARY
 	monitorDefaultToNearest = 2
 	processQueryLimitedInfo = 0x1000
 	eventModifyState        = 0x0002
