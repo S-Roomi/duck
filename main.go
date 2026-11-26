@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -30,25 +31,145 @@ var exeDir string
 
 func markerPath() string { return filepath.Join(exeDir, markerFileName) }
 
-// hideTaskbars hides the taskbars on mon (0 = all) and writes the marker
-// file, so a crash while hidden can be undone on the next start.
-func hideTaskbars(mon uintptr) {
-	setVisible(taskbarsOn(mon), false)
-	_ = os.WriteFile(markerPath(), []byte(time.Now().Format(time.RFC3339)), 0o644)
+// hideTaskbars and showTaskbars act on the taskbars of one monitor handle. They
+// leave the marker file alone: run() keeps it while any monitor is hidden.
+func hideTaskbars(mon uintptr) { setVisible(taskbarsOn(mon), false) }
+
+func showTaskbars(mon uintptr) { setVisible(taskbarsOn(mon), true) }
+
+// showAllTaskbars shows every taskbar and removes the marker file. It is for
+// crash recovery, --restore and "Quit and Restore taskbar".
+func showAllTaskbars() {
+	setVisible(taskbarWindows(), true)
+	_ = os.Remove(markerPath())
 }
 
-func showTaskbars(mon uintptr) {
-	setVisible(taskbarsOn(mon), true)
-	_ = os.Remove(markerPath())
+// writeMarker records "taskbar hidden", so a crash while hidden can be undone
+// on the next start.
+func writeMarker() {
+	_ = os.WriteFile(markerPath(), []byte(time.Now().Format(time.RFC3339)), 0o644)
 }
 
 // ---------------------------------------------------------------- main loop
 
-// target is a taskbar state: whether to hide, and on which monitor
-// (mon is 0 for every taskbar, which is always the case unless per_monitor is on).
-type target struct {
-	on  bool
-	mon uintptr
+// monState is the hide state of one monitor's taskbar. The main loop keeps one
+// per attached monitor (keyed by device name), so each taskbar is hidden,
+// restored and re-hidden on its own and Duck never shows one it did not hide.
+type monState struct {
+	applied, pending bool          // state in effect / state waiting to be applied
+	weHid            bool          // true only if THIS process hid this taskbar
+	forcedHid        bool          // the applied hide came from Keep taskbar hidden
+	hiddenFor        string        // process the taskbar is hidden for, for the tray tooltip
+	pendingSince     time.Time     // when pending last changed
+	pendingDelay     time.Duration // delay the pending state must hold before it is applied
+}
+
+// tick is what one pass of the main loop knows, shared by every monitor.
+type tick struct {
+	cfg       *Config
+	fg        foreground
+	paused    bool // Pause is on
+	forced    bool // Keep taskbar hidden is on
+	forcedNow bool // Keep taskbar hidden applies right now (not during shell UI)
+	multi     bool // more than one monitor, so log lines name the monitor
+}
+
+var lastReassertLog time.Time
+
+// desiredHidden says, for each monitor (by device name), whether its taskbar
+// should be hidden right now.
+func desiredHidden(mons []monInfo, t *tick) map[string]bool {
+	want := make(map[string]bool, len(mons))
+	if t.paused || !(t.fg.on || t.forcedNow) {
+		return want // nothing hidden
+	}
+	// per_monitor limits a fullscreen app's hide to its own monitor. Keep
+	// taskbar hidden always covers every monitor.
+	only := t.cfg.PerMonitor && !t.forcedNow
+	for _, m := range mons {
+		want[m.device] = !only || m.handle == t.fg.mon
+	}
+	return want
+}
+
+// step moves one monitor toward want: it starts or advances the pending delay
+// and applies the change once it has held long enough.
+func (s *monState) step(m monInfo, want bool, t *tick) {
+	where := ""
+	if t.multi {
+		where = " on " + m.shortName()
+	}
+
+	if want == s.applied {
+		s.pending = s.applied
+		// E.g. Keep taskbar hidden turned off while a fullscreen app is in
+		// front: the taskbar stays hidden, now for the fullscreen app.
+		s.forcedHid = s.applied && t.forcedNow
+		if s.applied && !s.forcedHid {
+			s.hiddenFor = t.fg.proc // e.g. one fullscreen app to another
+		}
+		// Explorer shows the taskbar again when it restarts and sometimes on
+		// its own (e.g. opening Start). Hide it again while we own it.
+		if s.applied && s.weHid && t.cfg.Reassert && anyVisible(taskbarsOn(m.handle)) {
+			hideTaskbars(m.handle)
+			if time.Since(lastReassertLog) > reassertLogGap {
+				lastReassertLog = time.Now()
+				log.Println("taskbar came back, hid it again" + where)
+			}
+		}
+		return
+	}
+	if want != s.pending {
+		s.pending = want
+		s.pendingSince = time.Now()
+	}
+	switch {
+	case want && t.forcedNow:
+		s.pendingDelay = 0 // Keep taskbar hidden: hide now
+	case want:
+		s.pendingDelay = time.Duration(t.cfg.EnterDelayMs) * time.Millisecond
+	case t.fg.shellUI || t.paused || (s.forcedHid && !t.forced):
+		// Start, Search, a flyout, Pause, or Keep taskbar hidden turned
+		// off: show the taskbar now.
+		s.pendingDelay = 0
+	default:
+		s.pendingDelay = time.Duration(t.cfg.LeaveDelayMs) * time.Millisecond
+	}
+	if time.Since(s.pendingSince) < s.pendingDelay {
+		return
+	}
+
+	// State has been stable long enough: apply it. Undo our previous hide first.
+	if s.applied && s.weHid {
+		showTaskbars(m.handle)
+		s.weHid = false
+		log.Println("taskbar restored" + where)
+	}
+	s.applied = want
+	s.forcedHid = want && t.forcedNow
+	if !want {
+		return
+	}
+	ts := taskbarsOn(m.handle)
+	switch {
+	case len(ts) > 0 && !anyVisible(ts):
+		log.Println("taskbar already hidden by something else, leaving it alone" + where)
+	case len(ts) == 0 && len(taskbarWindows()) > 0:
+		// This monitor has no taskbar of its own (e.g. "Show taskbar on all
+		// displays" is off): nothing to hide here, and nothing to own.
+	default:
+		// If no taskbar exists yet (Explorer not running), still take
+		// ownership so reassert hides it once Explorer comes up.
+		hideTaskbars(m.handle)
+		s.weHid = true
+		if s.forcedHid {
+			s.hiddenFor = ""
+			log.Println("taskbar hidden (keep taskbar hidden is on)" + where)
+		} else {
+			s.hiddenFor = t.fg.proc
+			log.Printf("taskbar hidden for %s (class %q)%s", t.fg.proc, t.fg.class, where)
+		}
+	}
 }
 
 func run(cfgPath string) {
@@ -68,15 +189,13 @@ func run(cfgPath string) {
 	// Crash recovery: if a previous run died while the taskbar was hidden, restore it.
 	if _, err := os.Stat(markerPath()); err == nil {
 		log.Println("found stale marker from a previous run, restoring taskbar")
-		showTaskbars(0)
+		showAllTaskbars()
 	}
 
-	var applied, pending target // state in effect / state waiting to be applied
-	weHid := false              // true only if THIS process hid the taskbar
-	forcedHid := false          // the applied hide came from Keep taskbar hidden
-	hiddenFor := ""             // process the taskbar is hidden for, for the tray tooltip
-	var pendingSince, lastReassertLog time.Time
-	var pendingDelay time.Duration // delay the pending state must hold before it is applied
+	states := map[string]*monState{} // hide state per monitor, by device name
+	markerOn := false                // hidden.marker is on disk
+	var lastMonKey string            // monitor list last written to the log
+	var mons []monInfo               // monitors seen on the last tick
 	var lastLogKey string
 	lastCfgCheck := time.Now()
 
@@ -118,15 +237,24 @@ func run(cfgPath string) {
 
 	for {
 		// Show the current state in the tray tooltip (posted only when it changes).
-		setTrayTip(tipText(paused.Load(), forceHide.Load(), applied.on && weHid, hiddenFor))
+		hidden, hiddenFor := false, ""
+		for _, m := range mons { // first hidden monitor names the app (primary first)
+			if s := states[m.device]; s != nil && s.applied && s.weHid {
+				hidden, hiddenFor = true, s.hiddenFor
+				break
+			}
+		}
+		setTrayTip(tipText(paused.Load(), forceHide.Load(), hidden, hiddenFor))
 
 		// Wait one poll interval, or less if a pending state is due sooner, so
 		// delays are not rounded up to the poll interval. Wake early on stop or
 		// on a foreground change.
 		timeout := cfg.PollMs
-		if pending != applied {
-			left := pendingDelay - time.Since(pendingSince)
-			timeout = max(0, min(timeout, int((left+time.Millisecond-1)/time.Millisecond)))
+		for _, s := range states {
+			if s.pending != s.applied {
+				left := s.pendingDelay - time.Since(s.pendingSince)
+				timeout = max(0, min(timeout, int((left+time.Millisecond-1)/time.Millisecond)))
+			}
 		}
 		if waitStopOrWake(stopEv, wakeEv, timeout) {
 			break
@@ -179,88 +307,66 @@ func run(cfgPath string) {
 		isPaused := paused.Load()
 		isForced := forceHide.Load()
 		forcedNow := isForced && !fg.shellUI
-		want := target{on: (fg.on || forcedNow) && !isPaused}
-		if want.on && cfg.PerMonitor && !forcedNow {
-			want.mon = fg.mon
-		}
+		t := &tick{cfg: &cfg, fg: fg, paused: isPaused, forced: isForced, forcedNow: forcedNow}
 
-		if want == applied {
-			pending = applied
-			// E.g. Keep taskbar hidden turned off while a fullscreen app is in
-			// front: the taskbar stays hidden, now for the fullscreen app.
-			forcedHid = applied.on && forcedNow
-			if applied.on && !forcedHid {
-				hiddenFor = fg.proc // e.g. one fullscreen app to another
+		// Look at the monitors every tick (cheap) and log the list when it changes.
+		// If the call fails, keep the last list rather than forgetting our state.
+		if list := listMonitors(false); len(list) > 0 {
+			mons = list
+			if key := monitorsKey(mons); key != lastMonKey {
+				lastMonKey = key
+				log.Printf("monitors: %s", describeMonitors(listMonitors(true)))
 			}
-			// Explorer shows the taskbar again when it restarts and sometimes on
-			// its own (e.g. opening Start). Hide it again while we own it.
-			if applied.on && weHid && cfg.Reassert && anyVisible(taskbarsOn(applied.mon)) {
-				hideTaskbars(applied.mon)
-				if time.Since(lastReassertLog) > reassertLogGap {
-					lastReassertLog = time.Now()
-					log.Println("taskbar came back, hid it again")
+			for dev := range states { // a monitor that went away takes its taskbar with it
+				if !slices.ContainsFunc(mons, func(m monInfo) bool { return m.device == dev }) {
+					delete(states, dev)
 				}
 			}
-			continue
 		}
-		if want != pending {
-			pending = want
-			pendingSince = time.Now()
+		t.multi = len(mons) > 1
+
+		want := desiredHidden(mons, t)
+		for _, m := range mons {
+			s := states[m.device]
+			if s == nil {
+				s = &monState{}
+				states[m.device] = s
+			}
+			s.step(m, want[m.device], t)
+		}
+
+		// hidden.marker exists while any taskbar is hidden by us.
+		anyHid := false
+		for _, s := range states {
+			anyHid = anyHid || s.weHid
 		}
 		switch {
-		case want.on && forcedNow:
-			pendingDelay = 0 // Keep taskbar hidden: hide now
-		case want.on:
-			pendingDelay = time.Duration(cfg.EnterDelayMs) * time.Millisecond
-		case fg.shellUI || isPaused || (forcedHid && !isForced):
-			// Start, Search, a flyout, Pause, or Keep taskbar hidden turned
-			// off: show the taskbar now.
-			pendingDelay = 0
-		default:
-			pendingDelay = time.Duration(cfg.LeaveDelayMs) * time.Millisecond
-		}
-		if time.Since(pendingSince) < pendingDelay {
-			continue
-		}
-
-		// State has been stable long enough: apply it. Undo our previous hide
-		// first (this also covers moving to another monitor in per_monitor mode).
-		if applied.on && weHid {
-			showTaskbars(applied.mon)
-			weHid = false
-			log.Println("taskbar restored")
-		}
-		applied = want
-		forcedHid = want.on && forcedNow
-		if want.on {
-			ts := taskbarsOn(want.mon)
-			if len(ts) > 0 && !anyVisible(ts) {
-				log.Println("taskbar already hidden by something else, leaving it alone")
-			} else {
-				// If no taskbar exists yet (Explorer not running), still take
-				// ownership so reassert hides it once Explorer comes up.
-				hideTaskbars(want.mon)
-				weHid = true
-				if forcedHid {
-					hiddenFor = ""
-					log.Println("taskbar hidden (keep taskbar hidden is on)")
-				} else {
-					hiddenFor = fg.proc
-					log.Printf("taskbar hidden for %s (class %q)", fg.proc, fg.class)
-				}
-			}
+		case anyHid && !markerOn:
+			writeMarker()
+			markerOn = true
+		case !anyHid && markerOn:
+			_ = os.Remove(markerPath())
+			markerOn = false
 		}
 	}
 
 	// Clean exit: never leave the taskbar hidden behind us.
-	switch {
-	case restoreOnExit.Load():
-		// "Stop and restore taskbar" from the tray: same as --restore.
+	if restoreOnExit.Load() {
+		// "Quit and Restore taskbar" from the tray: same as --restore.
 		log.Println("exiting, forcing every taskbar to show")
-		showTaskbars(0)
-	case weHid:
-		log.Println("exiting, restoring taskbar")
-		showTaskbars(applied.mon)
+		showAllTaskbars()
+	} else {
+		restored := false
+		for _, m := range listMonitors(false) {
+			if s := states[m.device]; s != nil && s.weHid {
+				showTaskbars(m.handle)
+				restored = true
+			}
+		}
+		if restored {
+			log.Println("exiting, restoring taskbar")
+		}
+		_ = os.Remove(markerPath())
 	}
 	log.Println("stopped")
 }
@@ -335,7 +441,7 @@ func main() {
 		case "--restore":
 			// A running watcher would hide the taskbar again, so stop it first.
 			sendStop()
-			showTaskbars(0)
+			showAllTaskbars()
 			log.Println("--restore: taskbar shown")
 		case "--install-autostart":
 			setAutostart(true)
