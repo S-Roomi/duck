@@ -2,6 +2,7 @@
 
 A small background process for Windows 10/11 that automatically hides the taskbar when a fullscreen or borderless app is in front.
 
+Used to be named ATH
 ## Features
 
 - Hides the taskbar while a fullscreen or borderless app is in front, and brings it back when you leave
