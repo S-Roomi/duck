@@ -16,6 +16,7 @@ Duck is a Windows-only Go background process (no visible window, no console; jus
 | `winevent.go` | Out-of-context `SetWinEventHook` (foreground, minimize-end) on a locked OS thread with its own message loop; `waitStopOrWake` |
 | `tray.go` | Notification-area icon and right-click menu on its own locked OS thread with a hidden window; icon drawn at runtime (`drawIcon`); autostart state read from the registry |
 | `hotkey.go` | Shortcuts (`hotkeySlots`: `hotkey` for Pause, `hide_hotkey` for Keep taskbar hidden): `parseHotkey()` and `RegisterHotKey` on its own locked OS thread with a message loop (hwnd 0, so `WM_HOTKEY` goes to that thread); re-registers on config reload |
+| `monitors.go` | `listMonitors()` (EnumDisplayMonitors: handle, `\\.\DISPLAYn` device name, primary flag, rect, optional hardware ID) and `matchMonitor()` for config names (`"primary"`, `"secondary"`, `DISPLAY2`, `MONITOR\GSM5B09`); tests in `monitors_test.go` (`go test ./...` runs natively on Windows) |
 | `win32.go` | DLL/proc declarations, structs, constants, `utf16()`, `monitorOf()` |
 | `config.go` | `Config`, defaults, loading, file-change time |
 | `version.go` | `version` (set with `-ldflags "-X main.version=vX.Y.Z"`, else `dev` + git commit from build info), `--version` output via the parent console or a message box |
@@ -29,6 +30,7 @@ You cannot run the exe from WSL or Linux. Cross-compile and vet:
 ```sh
 gofmt -l .                                    # must print nothing
 GOOS=windows GOARCH=amd64 go vet ./...
+go test ./...                                 # monitor name matching; runs natively on Windows
 GOOS=windows GOARCH=amd64 go build -ldflags "-H=windowsgui -s -w" -o bin/duck.exe
 ```
 
@@ -39,10 +41,10 @@ Go 1.22 (`go.mod`). The user compiles and tests on Windows themselves, so hand c
 ## How the main loop works
 
 - The loop waits on the stop event and the WinEvent wake event, with `poll_ms` as a fallback timeout. While a state change is pending, the timeout shrinks so `enter_delay_ms` / `leave_delay_ms` apply exactly.
-- Each tick computes a `target{on, mon}` (`mon` is 0 for "every taskbar", unless `per_monitor` is on). A new target must hold for its delay before it is applied. Shell UI (Start, Search, flyouts, Alt-Tab) uses a delay of 0.
-- `weHid` tracks whether this process hid the taskbar. Never show a taskbar this process didn't hide, and never hide one that something else already hid.
-- `reassert` re-hides the taskbar while the applied state is unchanged and Explorer has shown it again (e.g. after Explorer restarts).
-- `hidden.marker` next to the exe records "taskbar hidden". On startup, a leftover marker means a previous run died while hidden, so all taskbars are shown.
+- Each tick lists the monitors (`listMonitors`), and `desiredHidden()` returns, per monitor (keyed by device name such as `\\.\DISPLAY1`, not by `HMONITOR`), whether its taskbar should be hidden. With `per_monitor` off, or while Keep taskbar hidden applies, that is every monitor; with it on, only the fullscreen app's monitor. Each monitor has its own `monState` (applied, pending, `weHid`, `forcedHid`, `hiddenFor`, pending timer), advanced by `monState.step()`. A new state must hold for its delay before it is applied. Shell UI (Start, Search, flyouts, Alt-Tab) uses a delay of 0. State of a monitor that disappeared is dropped.
+- `weHid` (per monitor) tracks whether this process hid that taskbar. Never show a taskbar this process didn't hide, and never hide one that something else already hid. A monitor with no taskbar of its own (while others have one) is skipped without taking ownership.
+- `reassert` re-hides a taskbar while its applied state is unchanged and Explorer has shown it again (e.g. after Explorer restarts).
+- `hidden.marker` next to the exe records "some taskbar hidden by us": `run()` writes it when the first monitor is hidden and removes it when none is. `hideTaskbars`/`showTaskbars` don't touch it; `showAllTaskbars()` shows everything and removes it. On startup, a leftover marker means a previous run died while hidden, so all taskbars are shown.
 - `--quit` (old name `--stop`, still accepted) sets a named event. `--restore` stops the running instance, then shows all taskbars.
 - A second launch (mutex already taken) finds the running tray window by class (`Duck.TrayWindow`) and posts it `wmShowRunning`; the tray thread shows a balloon (`NIF_INFO`). The message crosses processes, so it carries no pointers. Without a tray window it only logs and exits.
 - The tray menu's Quit sets the same stop event. "Quit and Restore taskbar" also sets `restoreOnExit`, so `run()` shows every taskbar on the way out.
